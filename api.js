@@ -1,10 +1,10 @@
 import https from 'https';
 import axios from 'axios';
-import * as cheerio from 'cheerio';
-import { JSDOM } from 'jsdom';
-import fs from 'fs';
+import {
+    JSDOM
+} from 'jsdom';
 
-export const isMonetized = async (url, views, subs) => {
+export const isMonetized = async (url) => {
 
 
     return new Promise((resolve, reject) => {
@@ -17,7 +17,59 @@ export const isMonetized = async (url, views, subs) => {
 
             response.on('end', () => {
                 const body = data;
-                if (data.includes('ads') && views>=4000 && subs >= 1000) {
+                let parser = new JSDOM(body);
+                let document = parser.window.document;
+                let rawJS = '';
+                Object.values(document.querySelectorAll('script')).map(script => {
+                    if (script.innerHTML.includes('var ytInitialData')) {
+                        rawJS = script.innerHTML;
+                    }
+                });
+                let res = new Function(rawJS + `
+                    return ytInitialData;
+                `);
+
+                let subs = res().contents.twoColumnWatchNextResults.results.results.contents[1].videoSecondaryInfoRenderer.owner.videoOwnerRenderer.subscriberCountText ?.simpleText;
+
+
+                if (subs == undefined) {
+                    subs = 0;
+                } else {
+                    subs.split(' ')[0];
+                }
+
+
+
+                let views = res().contents.twoColumnWatchNextResults.results.results.contents[0].videoPrimaryInfoRenderer.viewCount.videoViewCountRenderer.viewCount ?.simpleText;
+                if (views == undefined) {
+                    views = 0;
+                } else {
+                    views.split(' ')[0];
+                }
+
+                if (subs != 0) {
+
+                    if (subs.includes(',')) {
+                        subs = parseInt(subs.replace(',', '')) * 10000;
+                    } else if (subs.includes('.')) {
+                        subs = parseInt(subs.replace('.', ''));
+                    } else {
+                        subs = parseInt(subs);
+                    }
+                }
+                if (views != 0) {
+
+                    if (views.includes(',')) {
+                        views = parseInt(views.replace(',', '')) * 10000;
+                    } else if (views.includes('.')) {
+                        views = parseInt(views.replace('.', ''));
+                    } else {
+                        views = parseInt(views);
+                    }
+                }
+
+
+                if (data.includes('ads') && views >= 4000 && subs >= 1000) {
                     resolve(true)
                 } else {
                     resolve(false)
@@ -39,12 +91,13 @@ export const isMonetized = async (url, views, subs) => {
 
 
 
-export const WEB_LIST = async (KeyWord,IS_CANAL=false) => {
+export const WEB_LIST = async (KeyWord) => {
 
 
     return new Promise((resolve, reject) => {
-        let vid='EgIQAQ%253D%253D',can='EgIQAg%253D%253D';
-        const request = https.request(`https://www.youtube.com/results?search_query=${KeyWord}&sp=${IS_CANAL?can:vid}`, (response) => {
+        let vid = 'EgIQAQ%253D%253D',
+            can = 'EgIQAg%253D%253D';
+        const request = https.request(`https://www.youtube.com/results?search_query=${KeyWord}&sp=${vid}`, (response) => {
 
             let data = '';
             response.on('data', (chunk) => {
@@ -58,15 +111,20 @@ export const WEB_LIST = async (KeyWord,IS_CANAL=false) => {
                 let parser = new JSDOM(body);
                 let document = parser.window.document;
                 let rawJS = '';
-                Object.values(document.querySelectorAll('script')).map(script=>{
-                    if(script.innerHTML.includes('var ytInitialData')){
+                Object.values(document.querySelectorAll('script')).map(script => {
+                    if (script.innerHTML.includes('var ytInitialData')) {
                         rawJS = script.innerHTML;
                     }
                 });
-                let res =  new Function(rawJS+`
+                let res = new Function(rawJS + `
                     return ytInitialData;
                 `);
+
                 let videolist = res().contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents;
+                videolist = Object.values(videolist);
+
+
+
                 resolve(videolist);
             });
         })
@@ -79,6 +137,66 @@ export const WEB_LIST = async (KeyWord,IS_CANAL=false) => {
 
     });
 }
+
+
+
+
+export const VIDEO_CANAL = async (KeyWord, filter = null) => {
+
+
+    return new Promise((resolve, reject) => {
+        let vid = 'EgIQAQ%253D%253D';
+        const request = https.request(`https://www.youtube.com/results?search_query=${KeyWord}&sp=${filter?filter:vid}`, (response) => {
+
+            let data = '';
+            response.on('data', (chunk) => {
+                data = data + chunk.toString();
+            });
+
+            response.on('end', async () => {
+                const body = data;
+
+
+                let parser = new JSDOM(body);
+                let document = parser.window.document;
+                let rawJS = '';
+                Object.values(document.querySelectorAll('script')).map(script => {
+                    if (script.innerHTML.includes('var ytInitialData')) {
+                        rawJS = script.innerHTML;
+                    }
+                });
+                let res = new Function(rawJS + `
+                    return ytInitialData;
+                `);
+
+                let videolist = res().contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents;
+                videolist = Object.values(videolist);
+
+                let finalList = [];
+
+                await Promise.all(videolist.map(async v => {
+                    let vi = v;
+                    if (v.videoRenderer ?.videoId) {
+
+                        vi.videoRenderer.isMonetized = await isMonetized('https://www.youtube.com/watch?v=' + vi.videoRenderer.videoId);
+                        finalList.push(vi);
+                    }
+                }));
+
+                resolve(finalList);
+            });
+        })
+
+        request.on('error', (error) => {
+            reject(new Error(error));
+        });
+
+        request.end()
+
+    });
+}
+
+
 
 
 // --------------------------------------------------------------------------------------------------------------------------
@@ -109,7 +227,7 @@ export let apiStatistics = {
 
 
 
-export const ListVideos = async (q,maxResults) => {
+export const ListVideos = async (q, maxResults) => {
 
 
 
@@ -216,5 +334,4 @@ export const PrevPage = async (apiUrl) => {
     };
 
 }
-
 
